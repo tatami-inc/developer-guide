@@ -101,21 +101,32 @@ Note that the differences in results due to parallelization should be limited to
 
 ## SIMD vectorization
 
+Ah, vectorization: the policy with the most flip-flopping in this guide.
+
 Most of the loops in **tatami** are trivially auto-vectorizable so no further work is really necessary.
-In other cases where non-aliasing cannot be proven, I find it useful to decorate loops with the 
-[`SUBPAR_VECTORIZABLE`](https://github.com/LTLA/subpar?tab=readme-ov-file#encouraging-vectorization) macro.
-This assures the compiler that pointers do not alias and thus vectorization can be performed.
-Even in obviously vectorizable loops, this macro can still be useful by eliminating the need for aliasing checks.
+There might be a slight inefficiency from the need for a pre-loop checks against aliasing pointers, but this is tolerable.
+However, there are two scenarios where auto-vectorization is not possible.
 
-Another approach for encouraging auto-vectorization is to use OpenMP SIMD.
-This is slightly more portable in that compilers should support it off the bat,
-rather than requiring me to update **subpar** with new compiler-specific definitions for `SUBPAR_VECTORIZABLE`.
-However, it is often subject to a more heavy-handed interpretation by compilers.
-Upon seeing `#pragma omp simd`, [GCC](https://developers.redhat.com/articles/2023/12/08/vectorization-optimization-gcc) will forcibly vectorize the loop,
-even if doing so would decrease performance according to its cost model.
-[MSVC](https://devblogs.microsoft.com/cppblog/simd-extension-to-c-openmp-in-visual-studio/) goes further and enables fast floating-point inside the loop, which is not generally desirable..
-In the end, I wanted a lighter touch that would respect the compiler's knowledge about the target system.
+1. Accessing a sparse vector by index.
+   If the compiler cannot prove that the indices are unique, different loop iterations are not guaranteed to be independent. 
+   Here, I went through many possibilities to inform the compiler that vectorization can be performed.
+   
+   - Using OpenMP SIMD to force vectorization. 
+     While this works, it is often subject to a more heavy-handed interpretation by compilers.
+     Upon seeing `#pragma omp simd`, [GCC](https://developers.redhat.com/articles/2023/12/08/vectorization-optimization-gcc) will forcibly vectorize the loop,
+     even if doing so would decrease performance according to its cost model.
+     [MSVC](https://devblogs.microsoft.com/cppblog/simd-extension-to-c-openmp-in-visual-studio/) goes further and enables fast floating-point inside the loop, which is not generally desirable.
+   - Encouraging vectorization with compiler-specific pragmas to indicate that there are no dependencies between loop iterations,
+     e.g., `#pragma GCC ivdep` or `#pragma clang loop vectorize(assume_safety)`.
+     This also works fairly well but it's hard to keep track of exactly how each compiler is interpreting these pragmas.
+     Are all dependencies ignored? Or just the non-proven ones?
+     Needless to say, these pragmas are non-portable and require careful testing on each platform.
 
-Yet another choice is to just use a third-party library like **highway** or **Eigen**.
-I don't want to do this as it violates my general policy against dependencies and I don't think the benefits outweight the cost here.
-The experimental `<simd>` standard might be an option in the future, but then I'd have to write all the code to handle the looping, I'd prefer that the compiler just figure that out itself.
+   In the end, I suspect that it's not worth the effort to attempt to optimize this access pattern.
+   Plenty of excuses here: lack of efficient gather/scatter for many CPUs, likely memory bottlenecks in sparse data, etc.
+2. Calling `<cmath>` functions inside the loop, primarily for the delayed math operations.
+   Vectorization is precluded by the `errno` side-effect and, for some functions like `std::log`, the need for `-ffast-math` to use vectorized replacements.
+   While compiling with `-fno-math-errno` seems [fine](https://stackoverflow.com/questions/7420665/what-does-gccs-ffast-math-actually-do?noredirect=1&lq=1),
+   using fast math in general is obviously a less palatable option and I can't cajole GCC into use the (unexported) vectorized `log` function without it.
+   So, the solution is to just write a variant of a delayed operation helper that uses a vectorized `log` implementation from an external library like **Eigen**.
+   Then, users can choose between the standard helper or the vectorized variant that requires an extra dependency.
