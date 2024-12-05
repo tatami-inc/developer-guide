@@ -103,9 +103,16 @@ Note that the differences in results due to parallelization should be limited to
 
 Ah, vectorization: the policy with the most flip-flopping in this guide.
 
-Most of the loops in **tatami** are trivially auto-vectorizable so no further work is really necessary.
-There might be a slight inefficiency from the need for a pre-loop checks against aliasing pointers, but this is tolerable.
-However, there are two scenarios where auto-vectorization is not possible.
+Most of the loops in **tatami** are trivially auto-vectorizable so no further work is necessary when compiled with the relevant flags, e.g., `-O3`, `-march=`.
+There might be a slight inefficiency due to the need to check against aliasing pointers, but this is fine;
+the check is performed outside of the loop and should not have much impact on performance.
+On the rare occasion that the check is run frequently relative to the loop body, branch prediction should eliminate most of the cost for the expected case of non-aliasing pointers.
+Auto-vectorization also tends to use unaligned SIMD loads and stores, but it's hard to imagine doing otherwise in library code that might take pointers from anywhere (e.g., R).
+Fortunately, it seems like unaligned instructions are pretty performant on modern CPUs,
+see commentary [here](https://stackoverflow.com/questions/52147378/choice-between-aligned-vs-unaligned-x86-simd-instructions)
+and [here](https://stackoverflow.com/questions/20259694/is-the-sse-unaligned-load-intrinsic-any-slower-than-the-aligned-load-intrinsic-o).
+
+That said, there are two common scenarios where auto-vectorization is not possible.
 
 1. Accessing a sparse vector by index.
    If the compiler cannot prove that the indices are unique, different loop iterations are not guaranteed to be independent. 
