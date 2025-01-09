@@ -167,18 +167,19 @@ Note that the differences in results due to parallelization should be limited to
 ### False sharing
 
 False sharing can be mostly avoided by writing code in a manner that uses automatic variables allocated on each thread's stack.
-This would be good practice in general.
+This is good practice regardless of whether we're in a multi-threaded context.
 
-If each thread must write to the heap, false sharing can be mitigated by allocating to the heap within each thread, e.g., by creating a thread-specific `std::vector`.
-This gives `malloc` a chance to use different memory arenas (depending on the implementation) that puts each thread's allocations far away from each other.
+If threads need to write to the heap, false sharing can be mitigated by creating separate heap allocations within each thread, e.g., by constructing a thread-specific `std::vector`.
+This gives `malloc` a chance to use different memory arenas (depending on the implementation) that separates each thread's allocations.
 I could guarantee protection against false sharing by aligning all heap allocations to `hardware_destructive_interference_size`;
 but then I would need to override `std::allocator` in all STL containers, which seems too intrusive for general use.
 Obviously, writing to contiguous memory in the heap across multiple threads should be done sparingly, typically to the output buffer once all calculations are complete.
 
 An interesting sidenote is that each thread will typically create its own `tatami::Extractor` instance on the heap.
 Modifications to data members of each `tatami::Extractor` instance during `fetch()` calls could be another source of false sharing.
-This can be easily avoided by adding an `alignas(hardware_destructive_interference_size)` to the class definition,
-though unfortunately, we must wait for compiler support.
+This might be avoidable by adding an `alignas(hardware_destructive_interference_size)` to the class definition,
+but this is only supported by very recent compilers and I'm not even sure if this is legal when the object's natural alignment is stricter;
+so, we'll just stick to our ostrich strategy of hoping that `malloc` takes care of it.
 
 ## SIMD vectorization
 
