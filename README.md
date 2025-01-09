@@ -93,6 +93,55 @@ for (size_t r = 0; r < long_nr; ++r) {
 }
 ```
 
+## Zeroing arrays 
+
+Some functions store their output in a user-supplied pointer to a pre-allocated array.
+Such functions should not assume that the array has been zeroed.
+Incorrectly making this assumption can lead to subtle bugs when the functions are called with non-zeroed buffers.
+
+To ensure that this assumption is not present in function `X()`, my test suites fill the output buffer with a non-zero initial value from the `initial_value()` function below.
+Upon calling `X()` with `output.data()`, we can compare `output` against the expected output to verify that the function is non-zero initial value is ignored.
+If the expected output is not readily available, we could instead initialize a different vector with another call to `initial_value()` and call `X()` on it.
+Any inconsistency in the results would indicate that the variable `initial_value()` is affecting the results. 
+
+```cpp
+inline int initial_value() {
+    static int counter = 0;
+    if (counter == 255) { // fits in all numeric types.
+        counter = 1; 
+    } else {
+        ++counter;
+    }
+    return counter;
+}
+
+// Initializing the output buffer. 
+std::vector<int> output(n, initial_value());
+```
+
+The real utility of `initial_value()` lies in its ability to be inserted into function overloads that return `std::vector` objects.
+This is convenient as simply calling the vector-returning overload is sufficient to test all aspects of the base function, including independence from the initial value of the input buffer.
+(Otherwise, the vector-returning overload would always zero-initialize its vector and mask potential dependencies on the input buffer in the base function.)
+
+```cpp
+// Defined for test binaries only.
+#define TEST_INIT_VALUE initial_value()
+
+// "Base" function that accepts a pointer. 
+void X(int n, double* output);
+
+// Overload that returns a std::vector.
+std::vector<double> X(int n) {
+    std::vector<double> output(n
+#ifdef TEST_INIT_VALUE
+        , TEST_INIT_VALUE
+#endif
+    );
+    X(n, output.data());
+    return output;
+}
+```
+
 ## Parallelization and floating-point calculations
 
 Historically, floating-point calculations were parallelized in a manner that ensures that the number of workers does not affect the result.
