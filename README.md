@@ -166,14 +166,19 @@ Note that the differences in results due to parallelization should be limited to
 
 ### False sharing
 
-False sharing can be mostly avoided by writing code in a manner that uses automatic variables allocated on each thread's stack (which would be good practice regardless).
-However, the heap is still shared across threads and it is likely that each thread will need to write to the heap at some point.
-False sharing can be mitigated by allocating to the heap within each thread, which gives `malloc` a chance to use different arenas, depending on the implementation.
-(Guaranteed protection against false sharing requires alignment to `hardware_destructive_interference_size`, which seems too intrusive for general use.) 
-Writing to contiguous memory in the heap across multiple threads should be done sparingly, typically to the output buffer once all calculations are complete.
+False sharing can be mostly avoided by writing code in a manner that uses automatic variables allocated on each thread's stack.
+This would be good practice in general.
+
+If each thread must write to the heap, false sharing can be mitigated by allocating to the heap within each thread, e.g., by creating a thread-specific `std::vector`.
+This gives `malloc` a chance to use different memory arenas (depending on the implementation) that puts each thread's allocations far away from each other.
+I could guarantee protection against false sharing by aligning all heap allocations to `hardware_destructive_interference_size`;
+but then I would need to override `std::allocator` in all STL containers, which seems too intrusive for general use.
+Obviously, writing to contiguous memory in the heap across multiple threads should be done sparingly, typically to the output buffer once all calculations are complete.
 
 An interesting sidenote is that each thread will typically create its own `tatami::Extractor` instance on the heap.
 Modifications to data members of each `tatami::Extractor` instance during `fetch()` calls could be another source of false sharing.
+This can be easily avoided by adding an `alignas(hardware_destructive_interference_size)` to the class definition,
+though unfortunately, we must wait for compiler support.
 
 ## SIMD vectorization
 
