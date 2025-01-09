@@ -99,9 +99,9 @@ Some functions store their output in a user-supplied pointer to a pre-allocated 
 Such functions should not assume that the array has been zeroed.
 Incorrectly making this assumption can lead to subtle bugs when the functions are called with non-zeroed buffers.
 
-To ensure that this assumption is not present in function `X()`, my test suites fill the output buffer with a non-zero initial value from the `initial_value()` function below.
-Upon calling `X()` with `output.data()`, we can compare `output` against the expected output to verify that the function is non-zero initial value is ignored.
-If the expected output is not readily available, we could instead initialize a different vector with another call to `initial_value()` and call `X()` on it.
+To test that this assumption is not present in function `X()`, my test suites fill the output buffer with a non-zero initial value from the `initial_value()` function below.
+After calling `X()` with `output.data()`, we can compare `output` against the expected output to verify that the function ignores the non-zero initial value.
+If the expected output is not readily available, we could instead initialize a separate vector with another call to `initial_value()` and call `X()` on it.
 Any inconsistency in the results would indicate that the variable `initial_value()` is affecting the results. 
 
 ```cpp
@@ -178,7 +178,7 @@ Obviously, writing to contiguous memory in the heap across multiple threads shou
 An interesting sidenote is that each thread will typically create its own `tatami::Extractor` instance on the heap.
 Modifications to data members of each `tatami::Extractor` instance during `fetch()` calls could be another source of false sharing.
 This might be avoidable by adding an `alignas(hardware_destructive_interference_size)` to the class definition,
-but this is only supported by very recent compilers and I'm not even sure if this is legal when the object's natural alignment is stricter;
+but this is only supported by very recent compilers and I'm not even sure if it's legal when the object's natural alignment is stricter;
 so, we'll just stick to our ostrich strategy of hoping that `malloc` takes care of it.
 
 ## SIMD vectorization
@@ -216,6 +216,6 @@ That said, there are two common scenarios where auto-vectorization is not possib
 2. Calling `<cmath>` functions inside the loop, primarily for the delayed math operations.
    Vectorization is precluded by the `errno` side-effect and, for some functions like `std::log`, the need for `-ffast-math` to use vectorized replacements.
    While compiling with `-fno-math-errno` seems [fine](https://stackoverflow.com/questions/7420665/what-does-gccs-ffast-math-actually-do?noredirect=1&lq=1),
-   using fast math in general is obviously a less palatable option and I can't cajole GCC into use the (unexported) vectorized `log` function without it.
+   using fast math in general is obviously a less palatable option and I can't cajole GCC into using the (unexported) vectorized `log` function without it.
    So, the solution is to just write a variant of a delayed operation helper that uses a vectorized `log` implementation from an external library like **Eigen**.
    Then, users can choose between the standard helper or the vectorized variant that requires an extra dependency.
