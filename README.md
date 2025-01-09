@@ -26,6 +26,20 @@ A non-default constructor is allowed, though.
 
 (Some of these ideas were taken from Google's C++ style guide.)
 
+## Function arguments
+
+Functions should not have default arguments.
+Instead, functions should accept an `Options` struct that contains all arguments with their default values.
+This avoids confusion when a caller needs to specify a subset of those arguments or if we need to add more options.
+
+Similarly, template functions should refrain from adding defaults for their template arguments.
+The vast majority of template arguments are deduced at the call site so any defaults are confusing.
+The exception is when the output type can be specified by the user, in which case a sensible default may be convenient and self-documenting.
+
+In general, the template arguments should only contain types (or flags that influence the type, e.g., `sparse_`).
+It is tempting to move other parameters into the template arguments to avoid run-time checks for efficiency, but this should be used sparingly.
+Libraries typically need to be compiled to support all possibilities so such arguments will change at run time anyway.
+
 ## Accessing two-dimensional arrays
 
 ### Overflow from integer products
