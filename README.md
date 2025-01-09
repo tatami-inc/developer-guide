@@ -142,7 +142,9 @@ std::vector<double> X(int n) {
 }
 ```
 
-## Parallelization and floating-point calculations
+## Parallelization
+
+### Floating-point calculations
 
 Historically, floating-point calculations were parallelized in a manner that ensures that the number of workers does not affect the result.
 This requires some care in designing algorithms to ensure the exact same result was obtained during floating-point calculations.
@@ -161,6 +163,17 @@ With the benefit of hindsight, this policy is probably unnecessary.
 All future algorithmic choices in **tatami** can disregard this policy.
 This allows us to use more efficient methods for partitioning work between cores. 
 Note that the differences in results due to parallelization should be limited to floating-point error, i.e., the result should be the same under exact math.
+
+### False sharing
+
+False sharing can be mostly avoided by writing code in a manner that uses automatic variables allocated on each thread's stack (which would be good practice regardless).
+However, the heap is still shared across threads and it is likely that each thread will need to write to the heap at some point.
+False sharing can be mitigated by allocating to the heap within each thread, which gives `malloc` a chance to use different arenas, depending on the implementation.
+(Guaranteed protection against false sharing requires alignment to `hardware_destructive_interference_size`, which seems too intrusive for general use.) 
+Writing to contiguous memory in the heap across multiple threads should be done sparingly, typically to the output buffer once all calculations are complete.
+
+An interesting sidenote is that each thread will typically create its own `tatami::Extractor` instance on the heap.
+Modifications to data members of each `tatami::Extractor` instance during `fetch()` calls could be another source of false sharing.
 
 ## SIMD vectorization
 
