@@ -26,7 +26,9 @@ A non-default constructor is allowed, though.
 
 (Some of these ideas were taken from Google's C++ style guide.)
 
-## Function arguments
+## Functions
+
+### Arguments
 
 Functions should not have default arguments.
 Instead, functions should accept an `Options` struct that contains all arguments with their default values.
@@ -39,6 +41,38 @@ The exception is when the output type can be specified by the user, in which cas
 In general, the template arguments should only contain types (or flags that influence the type, e.g., `sparse_`).
 It is tempting to move other parameters into the template arguments to avoid run-time checks for efficiency, but this should be used sparingly.
 Libraries typically need to be compiled to support all possibilities so such arguments will change at run time anyway.
+
+### Lambdas
+
+Lambdas should be written in their full form, as shown below:
+
+```
+[...] (...) -> return_type {
+    /* body */
+}
+```
+
+For lambdas that have no return value, a `void` return should be explicitly specified.
+Similarly, lambdas that accept no arguments should still be written with `()`.
+The goal is to more clearly distinguish lambda definitions from IIFEs.
+
+Speaking of which, IIFEs should be written with their "canonical" form:
+
+```
+[...]{
+    /* body */
+}()
+```
+
+Developers should keep in mind that IIFEs use `auto` type deduction rules for the return type.
+This means that they will never return a reference type, which can be unexpected when using an IIFE to replace ternary expressions, e.g., for multi-line expressions or compile-time switches.
+In these (relatively rare) cases, we should instead write out a full lambda and invoke it:
+
+```
+const auto& x = [...]() -> const auto& {
+    /* body */
+}();
+```
 
 ## Accessing two-dimensional arrays
 
