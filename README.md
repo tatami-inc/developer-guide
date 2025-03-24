@@ -14,7 +14,9 @@ Variables and functions should be named with `snake_case`.
 Template parameters should have a trailing underscore to distinguish them from non-template parameters.
 This occurs regardless of whether a template parameter is a type.
 
-## `class` vs `struct`
+## Classes
+
+### `class` vs `struct`
 
 Classes should not have any public members.
 Access to members should be granted via getters or setters.
@@ -26,6 +28,14 @@ A non-default constructor is allowed, though.
 
 (Some of these ideas were taken from Google's C++ style guide.)
 
+### Templating
+
+Template parameters should only contain types or flags that influence the type, see the logic described [below](#function-templating).
+
+Class templates should avoid default arguments for their template parameters if that parameter is present in any constructor.
+Any differences between the default and the supplied type can lead to confusing error messages when using the relevant constructor.
+Other template parameters may have default arguments if a sensible type is available.
+
 ## Functions
 
 ### Arguments
@@ -33,14 +43,18 @@ A non-default constructor is allowed, though.
 Functions should not have default arguments.
 Instead, functions should accept an `Options` struct that contains all arguments with their default values.
 This avoids confusion when a caller needs to specify a subset of those arguments or if we need to add more options.
+Users willing to accept all default arguments can simply call the function with `{}`, which is convenient enough that no overload is needed. 
 
-Similarly, template functions should refrain from adding defaults for their template arguments.
-The vast majority of template arguments are deduced at the call site so any defaults are confusing.
-The exception is when the output type can be specified by the user, in which case a sensible default may be convenient and self-documenting.
+### Templating <a id='function-templating'></a>
 
-In general, the template arguments should only contain types (or flags that influence the type, e.g., `sparse_`).
-It is tempting to move other parameters into the template arguments to avoid run-time checks for efficiency, but this should be used sparingly.
-Libraries typically need to be compiled to support all possibilities so such arguments will change at run time anyway.
+Template parameters should only contain types or flags that influence the type, e.g., `sparse_`, `oracle_`.
+It is tempting to move other parameters into the template arguments to avoid runtime checks for efficiency.
+However, this is not ergonomic if those parameters are only known at runtime, as callers must manually write `if` statements to switch between instances of the template function.
+Thus, non-type-related template parameters should be used sparingly - usually only in performance-critical loops.
+
+Template functions should refrain from adding defaults for their template parameters.
+The majority of template arguments can be deduced at the call site so any contradictory defaults will yield confusing error messages.
+An exception is made for a template parameter that defines an non-deducible output type, in which case a "sensible" default may be convenient and self-documenting.
 
 ### Lambdas
 
