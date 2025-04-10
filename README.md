@@ -32,9 +32,24 @@ A non-default constructor is allowed, though.
 
 Template parameters should only contain types or flags that influence the type, see the logic described [below](#function-templating).
 
-Class templates should avoid default arguments for their template parameters if that parameter is present in any constructor.
-Any differences between the default and the supplied type can lead to confusing error messages when using the relevant constructor.
-Other template parameters may have default arguments if a sensible type is available.
+Class templates are more limited than their function counterparts in terms of argument deduction and the positioning of defaults (at least as of C++17).
+To avoid an overly frustrating user experience, we allow default arguments for template parameters that could have been deduced from a constructor.
+I'll admit that this is a rather reluctant compromise, as the presence of defaults increases the risk of strange type mismatch errors or implicit conversions. 
+However, it is quite acceptable when the default is the base class of all possible input types.
+This pattern is occasionally used to offer users a choice between run-time and compile-time polymorphism.
+
+```cpp
+template<typename Thing_ = Base>
+class Foo {
+public:
+    Foo(Thing_ x) {}
+};
+
+Foo<> x(Base());
+Foo<> y(Derived1());
+Foo<> z(Derived2());
+Foo<Derived2> z(Derived2()); // potential devirtualization.
+```
 
 ## Functions
 
@@ -48,13 +63,20 @@ Users willing to accept all default arguments can simply call the function with 
 ### Templating <a id='function-templating'></a>
 
 Template parameters should only contain types or flags that influence the type, e.g., `sparse_`, `oracle_`.
-It is tempting to move other parameters into the template arguments to avoid runtime checks for efficiency.
-However, this is not ergonomic if those parameters are only known at runtime, as callers must manually write `if` statements to switch between instances of the template function.
+It is tempting to move other parameters into the template arguments to convert run-time checks into compile-time checks for efficiency.
+However, this is not ergonomic if those parameters are only known at run-time, as callers must manually write `if` statements to switch between instances of the template function.
+I also suspect that this will bloat the binaries, especially if many combinations of arguments must be considered at compile-time.
 Thus, non-type-related template parameters should be used sparingly - usually only in performance-critical loops.
 
 Template functions should refrain from adding defaults for their template parameters.
-The majority of template arguments can be deduced at the call site so any contradictory defaults will yield confusing error messages.
-An exception is made for a template parameter that defines an non-deducible output type, in which case a "sensible" default may be convenient and self-documenting.
+Most template arguments can be deduced at the call site so the corresponding defaults would not be used anyway.
+If deduction fails, the presence of defaults can result in confusing errors when the compiler attempts to match the supplied type to the default (or worse, silently perform a conversion).
+The obvious exception is that of a template parameter that defines an non-deducible output type, in which case a "sensible" default may be convenient and self-documenting.
+
+In the template parameter list, non-deducible template parameters without defaults should always appear first;
+followed by the non-deducible parameters with defaults;
+and finally, all deducible parameters, in the order in which they appear in the types of the function arguments.
+This approach ensures that the non-deducible parameters can be easily specified by the user. 
 
 ### Lambdas
 
