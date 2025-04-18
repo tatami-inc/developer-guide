@@ -140,10 +140,11 @@ for (int r = 0; r < nr; ++r) {
 
 After the last iteration, `adj_ptr` will be equal to `ptr + nr * nc + col`, which is not valid.
 Developers should instead use offsets in the loop body to ensure that an invalid pointer is never constructed.
+(Technically, the last iteration could overflow the `size_t` type, but this is well-defined behavior and the value is never used anyway.)
 
 ```cpp
 int col = 5;
-size_t offset = col; // Make sure it's size_t to avoid overflow!
+std::size_t offset = col; // Make sure it's size_t to avoid overflow!
 for (int r = 0; r < nr; ++r) {
     row_contents[r] = ptr[offset];
     offset += nc;
@@ -156,9 +157,9 @@ This approach is easier to reason about and is more amenable to vectorization as
 
 ```cpp
 // Make sure it's all size_t to avoid overflow!
-size_t col = 5;
-size_t long_nc = nc, long_nr = nr;
-for (size_t r = 0; r < long_nr; ++r) {
+std::size_t col = 5;
+std::size_t long_nc = nc, long_nr = nr;
+for (std::size_t r = 0; r < long_nr; ++r) {
     row_contents[r] = ptr[col + r * long_nc];
 }
 ```
@@ -289,3 +290,29 @@ That said, there are two common scenarios where auto-vectorization is not possib
    using fast math in general is obviously a less palatable option and I can't cajole GCC into using the (unexported) vectorized `log` function without it.
    So, the solution is to just write a variant of a delayed operation helper that uses a vectorized `log` implementation from an external library like **Eigen**.
    Then, users can choose between the standard helper or the vectorized variant that requires an extra dependency.
+
+## Choosing integers
+
+The standard only provides weak guarantees on the size of each integer, e.g., `int` is only guaranteed to be no less than 16 bits.
+If a larger minimum size is needed, consider using `long` or `long long`.
+If a precise integer size is needed, consider using some of the types from `<cstdint>`.
+(A precise type is more predictable across platforms but may always not be available.)
+
+If any of the fixed-size integers or `size_t` are used, they should be namespaced with `std::`.
+The `<cstddef>` header should also be imported when using `std::size_t`, so as to avoid relying on a compiler-dependent alias.
+
+Indexed iteration over an arbitrary container `x` should use `decltype(x.size())`.
+This ensures that the index type is large enough to span the size of the container.
+Of course, this is only relevant if the size of the container is not subject to other constraints -
+for example, if we know that the container has length equal to the number of rows, and the number of rows fits into an `int`, it is obviously safe to use `int` to iterate over the container.
+
+```cpp
+auto n = x.size();
+for (decltype(n) i = 0; i < n; ++i) {
+    // do something here.
+}
+```
+
+Sometimes we have a general-purpose index that is to be used in multiple containers.
+In such cases, and in the absence of further constraints, we should use `std::size_t` to represent the index.
+This is probably large enough to hold all possible indices, at least for STL containers with the default allocator (where the `size_type` is practically always `std::size_t` anyway).
