@@ -315,4 +315,14 @@ for (decltype(n) i = 0; i < n; ++i) {
 
 Sometimes we have a general-purpose index that is to be used in multiple containers.
 In such cases, and in the absence of further constraints, we should use `std::size_t` to represent the index.
-This is probably large enough to hold all possible indices, at least for STL containers with the default allocator (where the `size_type` is practically always `std::size_t` anyway).
+This is probably large enough to hold all possible indices, at least for STL containers with the default allocator where the `size_type` is practically always `std::size_t` anyway.
+
+- For `std::vector` with the default allocator, we can be fairly confident that `size_type` is no greater than `std::size_t` in any hypothetical implementation.
+  A single call to the default allocator must yield an array of length that fits inside `std::size_t`,
+  and it would be a rather unusual - perhaps impossible? - `std::vector` implementation that performs multiple allocations to form a region of contiguous storage greater than `std::size_t`.
+  In fact, the requirements of `std::vector::data()` demand that the vector holds its data in an underlying array, which must have a maximum size representable by `std::size_t`.
+- Pragmatically, it is easiest to assume that `std::size_t` is sufficient for STL vectors as it simplifies the overloads.
+  I often write a function that accepts an arbitrary pointer of input/output data so that it can be used with pointers from `new` or arrays from other langauges' FFIs.
+  If we assume that `std::size_t` is enough, the same function can be used with `std::vector::data`, and the `std::vector` overload can be a simple wrapper.
+
+`std::size_t` should be considered the most appropriate type for indexing arrays via pointers, as it is the size of the largest array.
