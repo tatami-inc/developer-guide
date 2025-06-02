@@ -121,7 +121,12 @@ ptr[r * nc + c]; // gets matrix entry (r, c)
 ```
 
 If the integer type (typically promoted to `int`) is not large enough to hold the product, our code will be incorrect due to the overflow.
-Developers should coerce all operands to `size_t` before any arithmetic to ensure that no overflow occurs. 
+Developers should coerce all operands to `size_t` before any arithmetic to ensure that no overflow occurs.
+This is most easily done with [`sanisizer::nd_offset()`](https://github.com/LTLA/sanisizer):
+
+```cpp
+ptr[sanisizer::nd_offset(c, nc, r)]; // i.e., c + nc * r
+```
 
 ### Invalid pointer construction
 
@@ -139,8 +144,7 @@ for (int r = 0; r < nr; ++r) {
 ```
 
 After the last iteration, `adj_ptr` will be equal to `ptr + nr * nc + col`, which is not valid.
-Developers should instead use offsets in the loop body to ensure that an invalid pointer is never constructed.
-(Technically, the last iteration could overflow the `size_t` type, but this is well-defined behavior and the value is never used anyway.)
+A slightly better approach is to use offsets in the loop body to ensure that an invalid pointer is never constructed.
 
 ```cpp
 int col = 5;
@@ -151,18 +155,21 @@ for (int r = 0; r < nr; ++r) {
 }
 ```
 
-An even better approach is to just compute the 2-dimensional index directly in the loop body.
-Modern compilers (well, Clang and GCC, at least) can optimize out the multiplication so there is no performance penalty.
-This approach is easier to reason about and is more amenable to vectorization as there are no dependencies in the loop body.
+Unfortunately, the addition in the last iteration could overflow the offset type.
+This is technically fine for `size_t` but could be undefined behavior otherwise, even though the offset is not used after the loop.
+So, the safest approach is to just compute the 2-dimensional index directly in the loop body.
+This ensures that only valid offsets are ever computed, assuming that the loop stops at the end of the matrix.
 
 ```cpp
-// Make sure it's all size_t to avoid overflow!
-std::size_t col = 5;
-std::size_t long_nc = nc, long_nr = nr;
-for (std::size_t r = 0; r < long_nr; ++r) {
-    row_contents[r] = ptr[col + r * long_nc];
+int col = 5;
+for (int r = 0; r < nr; ++r) {
+    // Compute offset as 'col + nc * r' inside the loop.
+    row_contents[r] = ptr[sanisizer::nd_offset(col, nc, r)];
 }
 ```
+
+Modern compilers (well, Clang and GCC, at least) can optimize out the multiplication so there is no performance penalty compared to incrementing an offset.
+This approach is easier to reason about and is more amenable to vectorization as there are no dependencies in the loop body.
 
 ## Zeroing arrays 
 
