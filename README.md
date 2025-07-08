@@ -34,8 +34,8 @@ Template parameters should only contain types or flags that influence the type, 
 
 Class templates are more limited than their function counterparts in terms of argument deduction and the positioning of defaults (at least as of C++17).
 To avoid an overly frustrating user experience, we allow default arguments for template parameters that could have been deduced from a constructor.
-I'll admit that this is a rather reluctant compromise, as the presence of defaults increases the risk of strange type mismatch errors or implicit conversions. 
-However, it is quite acceptable when the default is the base class of all possible input types.
+This is a rather reluctant compromise, as the presence of defaults increases the risk of strange type mismatch errors or implicit conversions. 
+However, it is more palatable when the default is the base class of all possible input types, where mismatches and conversions are no longer a concern.
 This pattern is occasionally used to offer users a choice between run-time and compile-time polymorphism.
 
 ```cpp
@@ -59,6 +59,13 @@ Functions should not have default arguments.
 Instead, functions should accept an `Options` struct that contains all arguments with their default values.
 This avoids confusion when a caller needs to specify a subset of those arguments or if we need to add more options.
 Users willing to accept all default arguments can simply call the function with `{}`, which is convenient enough that no overload is needed. 
+
+If an argument is optional but has no sensible default, it should be wrapped in a `std::optional`.
+This is more explicit than using a sentinel value (e.g., -1 for unsigned integers) and more concise than passing in a separate `bool` for this purpose.
+
+Default values for integer arguments should consider using `sanisizer::cap()` to ensure that the value is below the maximum guaranteed by the standard for that integer type.
+For example, a `std::size_t` is only guaranteed to store up to 65535, so setting a greater default value could result in compiler warnings on some unusual implementations.
+This scenario is not uncommon for setting buffer sizes where a larger default value is preferred for performance on typical systems but lies beyond the standard-guaranteed upper limit.
 
 ### Templating <a id='function-templating'></a>
 
@@ -121,11 +128,20 @@ ptr[r * nc + c]; // gets matrix entry (r, c)
 ```
 
 If the integer type (typically promoted to `int`) is not large enough to hold the product, our code will be incorrect due to the overflow.
-Developers should coerce all operands to `size_t` before any arithmetic to ensure that no overflow occurs.
+Developers should coerce all operands to the array's size type before any arithmetic to ensure that no overflow occurs.
 This is most easily done with [`sanisizer::nd_offset()`](https://github.com/LTLA/sanisizer):
 
 ```cpp
-ptr[sanisizer::nd_offset(c, nc, r)]; // i.e., c + nc * r
+// Equivalent to ptr[c + nc * r] after casting all values to std::size_t.
+ptr[sanisizer::nd_offset<std::size_t>(c, nc, r)]; 
+```
+
+If we are allocating contiguous memory to hold a high-dimensional array, we should use `sanisizer::product()` to check that the product does not overflow the allocation's size type.
+Subsequent accesses into this allocation (e.g., via `sanisizer::nd_offset()` or friends) can omit this check as long as they are referencing valid positions.
+
+```cpp
+typedef std::vector<double> Buffer;
+Buffer buffer(sanisizer::product<typename Buffer::size_type>(nr, nc));
 ```
 
 ### Invalid pointer construction
@@ -148,7 +164,7 @@ A slightly better approach is to use offsets in the loop body to ensure that an 
 
 ```cpp
 int col = 5;
-std::size_t offset = col; // Make sure it's size_t to avoid overflow!
+std::size_t offset = col; // Make sure it's size_t to avoid overflow
 for (int r = 0; r < nr; ++r) {
     row_contents[r] = ptr[offset];
     offset += nc;
@@ -164,7 +180,7 @@ This ensures that only valid offsets are ever computed, assuming that the loop s
 int col = 5;
 for (int r = 0; r < nr; ++r) {
     // Compute offset as 'col + nc * r' inside the loop.
-    row_contents[r] = ptr[sanisizer::nd_offset(col, nc, r)];
+    row_contents[r] = ptr[sanisizer::nd_offset<std::size_t>(col, nc, r)];
 }
 ```
 
@@ -183,6 +199,7 @@ If the expected output is not readily available, we could instead initialize a s
 Any inconsistency in the results would indicate that the variable `initial_value()` is affecting the results. 
 
 ```cpp
+// Taken from https://github.com/libscran/scran_tests:
 inline int initial_value() {
     static int counter = 0;
     if (counter == 255) { // fits in all numeric types.
@@ -249,8 +266,8 @@ This is good practice regardless of whether we're in a multi-threaded context.
 
 If threads need to write to the heap, false sharing can be mitigated by creating separate heap allocations within each thread, e.g., by constructing a thread-specific `std::vector`.
 This gives `malloc` a chance to use different memory arenas (depending on the implementation) that separates each thread's allocations.
-I could guarantee protection against false sharing by aligning all heap allocations to `hardware_destructive_interference_size`;
-but then I would need to override `std::allocator` in all STL containers, which seems too intrusive for general use.
+We could guarantee protection against false sharing by aligning all heap allocations to `hardware_destructive_interference_size`;
+but then we would need to override `std::allocator` in all STL containers, which seems too intrusive for general use.
 Obviously, writing to contiguous memory in the heap across multiple threads should be done sparingly, typically to the output buffer once all calculations are complete.
 
 An interesting sidenote is that each thread will typically create its own `tatami::Extractor` instance on the heap.
@@ -298,7 +315,9 @@ That said, there are two common scenarios where auto-vectorization is not possib
    So, the solution is to just write a variant of a delayed operation helper that uses a vectorized `log` implementation from an external library like **Eigen**.
    Then, users can choose between the standard helper or the vectorized variant that requires an extra dependency.
 
-## Choosing integers
+## Choosing integer types
+
+### General comments
 
 The standard only provides weak guarantees on the size of each integer, e.g., `int` is only guaranteed to be no less than 16 bits.
 If a larger minimum size is needed, consider using `long` or `long long`.
@@ -307,6 +326,25 @@ If a precise integer size is needed, consider using some of the types from `<cst
 
 If any of the fixed-size integers or `size_t` are used, they should be namespaced with `std::`.
 The `<cstddef>` header should also be imported when using `std::size_t`, so as to avoid relying on a compiler-dependent alias.
+
+`std::size_t` is the most appropriate type for indexing arrays via pointers as it is the size of the largest array.
+That said, we should try to avoid spamming `std::size_t` everywhere as it is not guaranteed to be able to represent other integers.
+For example, an implementation could define a 16-bit `std::size_t` and 32-bit `int`.
+In general, the most appropriate integer type should be chosen to avoid casts and the associated risks of overflow/wrap-around.
+
+### On `Index_`
+
+In **tatami**, the `Index_` template parameter is used to represent the row and column indices.
+We expect that the user's choice of `Index_` is large enough to store the extents of both dimensions, i.e., the number of rows/columns.
+This also means that `Index_` is often a good choice for internal calculations that involve a single dimension,
+as the results of such calculations are usually non-negative and less than the extent.
+It can also be safely used to represent 1-based indices as all indices will still be no greater than the dimension extent after incrementing.
+
+Additionally, we expect that the dimension extents will fit into a `std::size_t`.
+This is because `tatami::fetch()` accepts a pointer to an array in which the matrix values might be stored, and addressing the elements of an array requires a `std::size_t` .
+Under this assumption, indices and extents that are typically stored as `Index_` can be safely converted to `std::size_t` without wrap-around, even if `Index_` is of a larger type.
+
+### Container sizes
 
 Indexed iteration over an arbitrary container `x` should use `decltype(x.size())`.
 This ensures that the index type is large enough to span the size of the container.
@@ -320,16 +358,37 @@ for (decltype(n) i = 0; i < n; ++i) {
 }
 ```
 
-Sometimes we have a general-purpose index that is to be used in multiple containers.
-In such cases, and in the absence of further constraints, we should use `std::size_t` to represent the index.
-This is probably large enough to hold all possible indices, at least for STL containers with the default allocator where the `size_type` is practically always `std::size_t` anyway.
+When allocating or resizing a container, we must consider the possibility that the new length is greater than the container's size type.
+If the implicit cast wraps around, we would silently create a vector that is smaller than intended.
+This can be prevented by using **sanisizer** functions to check for wrap-around:
 
-- For `std::vector` with the default allocator, we can be fairly confident that `size_type` is no greater than `std::size_t` in any hypothetical implementation.
-  A single call to the default allocator must yield an array of length that fits inside `std::size_t`,
-  and it would be a rather unusual - perhaps impossible? - `std::vector` implementation that performs multiple allocations to form a region of contiguous storage greater than `std::size_t`.
-  In fact, the requirements of `std::vector::data()` demand that the vector holds its data in an underlying array, which must have a maximum size representable by `std::size_t`.
-- Pragmatically, it is easiest to assume that `std::size_t` is sufficient for STL vectors as it simplifies the overloads.
-  I often write a function that accepts an arbitrary pointer of input/output data so that it can be used with pointers from `new` or arrays from other langauges' FFIs.
-  If we assume that `std::size_t` is enough, the same function can be used with `std::vector::data`, and the `std::vector` overload can be a simple wrapper.
+```cpp
+x.resize(sanisizer::cast<decltype(x.size())>(new_length));
 
-`std::size_t` should be considered the most appropriate type for indexing arrays via pointers, as it is the size of the largest array.
+// For new objects:
+auto x2 = sanisizer::create<std::vector<double> >(new_length);
+```
+
+In the specific case of resizing to a dimension extent in **tatami**, we could instead use some specialized wrappers around the **sanisizer** functions.
+These implement some optimizations by exploiting the assumption that extents can be safely cast to `std::size_t`.
+
+```cpp
+tatami::resize_container_to_Index_size(x, new_length);
+auto x2 = tatami::create_container_of_Index_size(x, new_length);
+```
+
+This protection may be omitted for calls to a container's `reserve()` method, if one exists.
+A smaller-than-expected reservation from wrap-around is mostly harmless, as it will be expanded upon insertion.
+(Nonetheless, performance degradation can be avoided by using `sanisizer::cap()` to attempt to reserve up to the maximum value of the size type.)
+Insertions beyond the container's size type will eventually result in `std::bad_alloc`.
+
+### On `std::vector::size_type`
+
+For STL vectors with the default allocator, we can be fairly confident that `size_type` is no greater than `std::size_t` in any hypothetical implementation.
+The requirements of `std::vector::data()` demand that the vector holds its data in an underlying array, which must have a maximum size representable by `std::size_t`.
+Moreover, a call to the default allocator must yield an array of length that fits inside `std::size_t`,
+and it would be rather unusual - perhaps impossible? - for a `std::vector` implementation to perform multiple allocations to form a region of contiguous storage greater than `std::size_t`.
+
+In addition, it is most pragmatic to assume that `std::size_t` is sufficient to represent the length of STL vectors as it simplifies the overloads.
+Many of my functions will accept an arbitrary pointer of input/output data so that they can be used with pointers from `new` or arrays from other langauges' FFIs.
+If we assume that `std::size_t` is enough, the same function can be used with `std::vector::data` and the `std::vector` overload can be a simple wrapper.
