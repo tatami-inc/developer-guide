@@ -392,3 +392,23 @@ and it would be rather unusual - perhaps impossible? - for a `std::vector` imple
 In addition, it is most pragmatic to assume that `std::size_t` is sufficient to represent the length of STL vectors as it simplifies the overloads.
 Many of my functions will accept an arbitrary pointer of input/output data so that they can be used with pointers from `new` or arrays from other langauges' FFIs.
 If we assume that `std::size_t` is enough, the same function can be used with `std::vector::data` and the `std::vector` overload can be a simple wrapper.
+
+### On iterator differences
+
+An annoying quirk of C++ is that distances between pointers for the same array (and possibly iterator differences in general) are not guaranteed to fit into the difference type.
+For example, `std::ptrdiff_t` is a typically the signed counterpart of `std::size_t`, and an array size that fits in the latter may not fit in the former.
+This annoyance is compounded by the fact that many of the STL algorithms return iterators, e.g., `std::max_element`, `std::lower_bound`.
+If we need a positional index, we need to convert the returned iterator back to an index via subtraction.
+We can do so safely using the `sanisizer::ptrdiff()` function:
+
+```cpp
+std::vector<double> x(vec_length);
+sanisizer::can_ptrdiff<decltype(x.begin())>(vec_length);
+auto max_it = std::max_element(x.begin(), x.end());
+auto max_idx = max_it - x.begin(); // known to be safe after can_ptrdiff().
+```
+
+In practice, this may not be necessary as glibc 2.30 prohibits allocations beyond the maximum size of `PTRDIFF_MAX`.
+(Presumably the same restrictions apply for `std::vector`.)
+However, this is a implementation choice, and the standard explicitly mentions that the pointer difference may not fit in `std::ptrdiff_t` in a conforming implementation!
+So, better to be safe than sorry.
