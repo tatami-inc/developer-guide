@@ -107,7 +107,7 @@ Speaking of which, IIFEs should be written with their "canonical" form:
 }()
 ```
 
-Developers should keep in mind that IIFEs use `auto` type deduction rules for the return type.
+Developers keep in mind that IIFEs use `auto` type deduction rules for the return type.
 This means that they will never return a reference type, which can be unexpected when using an IIFE to replace ternary expressions, e.g., for multi-line expressions or compile-time switches.
 In these (relatively rare) cases, we should instead write out a full lambda and invoke it:
 
@@ -115,6 +115,74 @@ In these (relatively rare) cases, we should instead write out a full lambda and 
 const auto& x = [...]() -> const auto& {
     /* body */
 }();
+```
+
+## Using `const` <a id='using-const'></a>
+
+Local variables and function arguments should be declared as `const` unless they need to be modified.
+Similarly, class methods should consider being `const` wherever possible.
+This reduces the risk of accidental modification, especially from inadvertent references.
+Consider:
+
+```cpp
+template<typename Bar_>
+void foo(Bar_ x) {
+    Bar_ y = x;
+    ++y;
+}
+```
+
+If `Bar_` is defined to be a reference, then `foo()` would modify the input value, which is probably not what we intended.
+By comparison, setting the function argument to be `const` guarantees that any reference will be a compile-time error.
+
+```cpp
+template<typename Bar_>
+void foo2(const Bar_ x) {
+    Bar_ y = x; // need to modify this, so can't be const. 
+    ++y;
+}
+```
+
+## Using `decltype`
+
+One feature of `decltype()` is that it will preserve the reference in the type.
+This can be dangerous - for example, the code below will modify `start` by its reference `i`:
+
+```cpp
+void loop_body(int& start, int& end) {
+    for (decltype(start) i = start; i < end; ++i) { // 'i' is a 'int&' alias for 'start'.
+        // Do something
+    }
+}
+```
+
+A simple solution is to define a small copying utility that clears out all qualifiers and references.
+This is only "called" within a `decltype()` statement to obtain the desired type:
+
+```cpp
+#include <type_traits>
+
+template<typename Input_>
+std::remove_cvref_t<std::remove_reference_t<Input_> > I(Input_ x) { // i.e., identity().
+    return x;
+}
+
+void loop_body2(int& start, int& end) {
+    for (decltype(I(start)) i = start; i < end; ++i) { // 'i' is now an 'int'.
+        // Do something
+    }
+}
+```
+
+Given how simple it is to do, we'd suggest just adding `I()` in all `decltype()` statements that should return a non-reference type.
+This eliminates any concern about references without manual checking of the `decltype()`'d expression, especially those involving a function call.
+It also avoids unintended propagation of `const`-ness when we follow the [previous section's advice](#using-const)):
+
+```cpp
+void foo3(const int x) {
+    decltype(I(x)) y = x; // 'I()' removes constness so that we can modify 'y'.
+    ++y;
+}
 ```
 
 ## Accessing two-dimensional arrays
@@ -346,14 +414,14 @@ Under this assumption, indices and extents that are typically stored as `Index_`
 
 ### Container sizes
 
-Indexed iteration over an arbitrary container `x` should use `decltype(x.size())`.
+Indexed iteration over an arbitrary container `x` should use `decltype(I(x.size()))`.
 This ensures that the index type is large enough to span the size of the container.
 Of course, this is only relevant if the size of the container is not subject to other constraints -
 for example, if we know that the container has length equal to the number of rows, and the number of rows fits into an `int`, it is obviously safe to use `int` to iterate over the container.
 
 ```cpp
-auto n = x.size();
-for (decltype(n) i = 0; i < n; ++i) {
+const auto n = x.size();
+for (decltype(I(n)) i = 0; i < n; ++i) {
     // do something here.
 }
 ```
@@ -363,7 +431,7 @@ If the implicit cast wraps around, we would silently create a vector that is sma
 This can be prevented by using **sanisizer** functions to check for wrap-around:
 
 ```cpp
-x.resize(sanisizer::cast<decltype(x.size())>(new_length));
+sanisizer::resize(x, new_length);
 
 // For new objects:
 auto x2 = sanisizer::create<std::vector<double> >(new_length);
@@ -403,7 +471,7 @@ We can do so safely using the `sanisizer::ptrdiff()` function:
 
 ```cpp
 std::vector<double> x(vec_length);
-sanisizer::can_ptrdiff<decltype(x.begin())>(vec_length);
+sanisizer::can_ptrdiff<decltype(I(x.begin()))>(vec_length);
 auto max_it = std::max_element(x.begin(), x.end());
 auto max_idx = max_it - x.begin(); // known to be safe after can_ptrdiff().
 ```
