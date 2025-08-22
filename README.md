@@ -205,6 +205,28 @@ void foo3(const int x) {
 }
 ```
 
+To be honest, `auto` should be preferred over `decltype()` in most situations where a variable is defined.
+`auto` doesn't need the `I()` trick to deduce a non-reference, it's shorter to write, and it doesn't require updating upon changes to variable names. 
+`decltype()` only needs to be used when the type needs to be more explicit, especially when storing the results of expressions of unknown type.
+For example:
+
+```cpp
+void loop_body3(const int& start, const int& end) {
+    for (auto i = start; i < end; ++i) { // 'i' is an 'int' after deduction.
+        // Do something.
+    }
+}
+
+template<typename Index_>
+void loop_body4(const Index_ start, const Index_ length) {
+    // start + length is not of a known type after integer promotion,
+    // so we force it to be the same as 'start' via decltype().
+    for (decltype(I(start)) i = start, end = start + length; i < end; ++i) {
+        // Do something.
+    }
+}
+```
+
 ## Accessing two-dimensional arrays
 
 ### Overflow from integer products
