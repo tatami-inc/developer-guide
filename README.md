@@ -143,6 +143,26 @@ void foo2(const Bar_ x) {
 }
 ```
 
+Some might say that it is bad form to expose the implementation detail of `x`'s `const`-ness to the user if we're passing it by value anyway.
+Which is a fair point (see discussion [here](https://stackoverflow.com/questions/117293/does-using-const-on-function-parameters-have-any-effect-why-does-it-not-affect)) -
+but for header-only libraries, there isn't a clear separation between the function declaration from the definition, so just adding a `const` is the most pragmatic solution here. 
+We might be able to achieve this for virtual methods, e.g., the following seems to work:
+
+```cpp
+class Base {
+public:
+    Base() = default;
+    virtual ~Base() = default;
+    virtual void foo(int) = 0;
+};
+
+class Derived : public Base {
+public:
+    Derived() = default;
+    void foo(const int) {}
+};
+```
+
 ## Using `decltype`
 
 One feature of `decltype()` is that it will preserve the reference in the type.
