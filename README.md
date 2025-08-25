@@ -183,9 +183,12 @@ This is only "called" within a `decltype()` statement to obtain the desired type
 #include <type_traits>
 
 template<typename Input_>
-std::remove_cvref_t<std::remove_reference_t<Input_> > I(Input_ x) { // i.e., identity().
+std::remove_cv_t<std::remove_reference_t<Input_> > I(Input_ x) { // i.e., identity().
     return x;
 }
+
+// Could also achieve the same effect with std::remove_cvref_t in C++20,
+// or even auto to remove references/const/etc. during template deduction.
 
 void loop_body2(int& start, int& end) {
     for (decltype(I(start)) i = start; i < end; ++i) { // 'i' is now an 'int'.
@@ -194,9 +197,9 @@ void loop_body2(int& start, int& end) {
 }
 ```
 
-Given how simple it is to do, we'd suggest just adding `I()` in all `decltype()` statements that should return a non-reference type.
+Given how simple it is to do, I'd suggest just adding `I()` to all `decltype()` statements that should return a non-reference type.
 This eliminates any concern about references without manual checking of the `decltype()`'d expression, especially those involving a function call.
-It also avoids unintended propagation of `const`-ness when we follow the [previous section's advice](#using-const)):
+It also avoids unintended propagation of `const`-ness when we follow the [previous section's advice](#using-const):
 
 ```cpp
 void foo3(const int x) {
@@ -205,7 +208,7 @@ void foo3(const int x) {
 }
 ```
 
-To be honest, `auto` should be preferred over `decltype()` in most situations where a variable is defined.
+Personally, I would prefer to use `auto` over `decltype()` in most situations where a variable is defined.
 `auto` doesn't need the `I()` trick to deduce a non-reference, it's shorter to write, and it doesn't require updating upon changes to variable names. 
 `decltype()` only needs to be used when the type needs to be more explicit, especially when storing the results of expressions of unknown type.
 For example:
