@@ -522,6 +522,6 @@ auto max_idx = max_it - x.begin(); // known to be safe after can_ptrdiff().
 ```
 
 In practice, this may not be necessary as glibc 2.30 prohibits allocations beyond the maximum size of `PTRDIFF_MAX`.
-(Presumably the same restrictions apply for `std::vector`.)
+(See [here](https://lists.gnu.org/archive/html/info-gnu/2019-08/msg00000.html) for discussion - presumably the same restrictions apply for `std::vector`.)
 However, this is a implementation choice, and the standard explicitly mentions that the pointer difference may not fit in `std::ptrdiff_t` in a conforming implementation!
 So, better to be safe than sorry.
