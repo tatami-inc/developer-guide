@@ -525,3 +525,16 @@ In practice, this may not be necessary as glibc 2.30 prohibits allocations beyon
 (See [here](https://lists.gnu.org/archive/html/info-gnu/2019-08/msg00000.html) for discussion - presumably the same restrictions apply for `std::vector`.)
 However, this is a implementation choice, and the standard explicitly mentions that the pointer difference may not fit in `std::ptrdiff_t` in a conforming implementation!
 So, better to be safe than sorry.
+
+### Converting to/from floating-point
+
+When converting an integer to floating-point, we assume that the implementation's floating-point numbers are IEEE-754 compliant.
+This allows out-of-range conversions to safely overflow to the signed infinities.
+Note that we already assume IEEE-754 compliance to guarantee the safety of delayed arithmetic operations in **tatami**;
+it would much be too tedious to manually check for potential overflow and prevent undefined behavior in a non-compliant implementation.
+In practice, overflow should be very rare given that a single-precision float can store all 64-bit integers without overflow.
+
+In the unusual case where we need to convert a floating-point number to an integer, we can use `sanisizer::from_float()` to protect against undefined behavior due to overflow.
+This is more robust than checking the `FE_INVALID` flag, which seems to be set for non-finite conversions but is not reliably set for overflow.
+For example, when casting doubles to a smaller integer type, GCC on x86-64 uses the same instruction (`cvttsd2si`) to first cast the double to a 64-bit integer and then truncate the result.
+As no overflow actually occurs in the floating-point-related instruction, the exception flag is never set by the hardware. 
