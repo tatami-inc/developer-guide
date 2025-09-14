@@ -176,40 +176,37 @@ void loop_body(int& start, int& end) {
 }
 ```
 
-A simple solution is to define a small copying utility that clears out all qualifiers and references.
-This is only "called" within a `decltype()` statement to obtain the desired type:
+A simple solution is to define a small alias that clears out all qualifiers and references.
 
 ```cpp
 #include <type_traits>
 
 template<typename Input_>
-std::remove_cv_t<std::remove_reference_t<Input_> > I(Input_ x) { // i.e., identity().
-    return x;
-}
+using I = std::remove_cv_t<std::remove_reference_t<Input_> >; // i.e., identity().
 
 // Could also achieve the same effect with std::remove_cvref_t in C++20,
 // or even auto to remove references/const/etc. during template deduction.
 
 void loop_body2(int& start, int& end) {
-    for (decltype(I(start)) i = start; i < end; ++i) { // 'i' is now an 'int'.
+    for (I<decltype(start)> i = start; i < end; ++i) { // 'i' is now an 'int'.
         // Do something
     }
 }
 ```
 
-Given how simple it is to do, I'd suggest just adding `I()` to all `decltype()` statements that should return a non-reference type.
+Given how simple it is to do, I'd suggest just adding `I<>` around all `decltype()` statements that should return a non-reference type.
 This eliminates any concern about references without manual checking of the `decltype()`'d expression, especially those involving a function call.
 It also avoids unintended propagation of `const`-ness when we follow the [previous section's advice](#using-const):
 
 ```cpp
 void foo3(const int x) {
-    decltype(I(x)) y = x; // 'I()' removes constness so that we can modify 'y'.
+    I<decltype(x)> y = x; // removes constness so that we can modify 'y'.
     ++y;
 }
 ```
 
 Personally, I would prefer to use `auto` over `decltype()` in most situations where a variable is defined.
-`auto` doesn't need the `I()` trick to deduce a non-reference, it's shorter to write, and it doesn't require updating upon changes to variable names. 
+`auto` doesn't need the `I<>` trick to deduce a non-reference, it's shorter to write, and it doesn't require updating upon changes to variable names. 
 `decltype()` only needs to be used when the type needs to be more explicit, especially when storing the results of expressions of unknown type.
 For example:
 
@@ -222,9 +219,9 @@ void loop_body3(const int& start, const int& end) {
 
 template<typename Index_>
 void loop_body4(const Index_ start, const Index_ length) {
-    // start + length is not of a known type after integer promotion,
-    // so we force it to be the same as 'start' via decltype().
-    for (decltype(I(start)) i = start, end = start + length; i < end; ++i) {
+    // 'start + length' may not be the same as 'start' after integer promotion,
+    // so we force it to be the same via 'decltype()'.
+    for (I<decltype(start)> i = start, end = start + length; i < end; ++i) {
         // Do something.
     }
 }
