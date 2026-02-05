@@ -82,13 +82,25 @@ An annoying quirk of C++ is that distances between pointers for the same array (
 For example, `std::ptrdiff_t` is a typically the signed counterpart of `std::size_t`, and an array size that fits in the latter may not fit in the former.
 This annoyance is compounded by the fact that many of the STL algorithms return iterators, e.g., `std::max_element`, `std::lower_bound`.
 If we need a positional index, we need to convert the returned iterator back to an index via subtraction.
-We can do so safely using the `sanisizer::ptrdiff()` function:
+We can use the `sanisizer::ptrdiff()` function to ensure that the difference can be represented by the iterator's difference type:
 
 ```cpp
 std::vector<double> x(vec_length);
 sanisizer::can_ptrdiff<decltype(I(x.begin()))>(vec_length);
 auto max_it = std::max_element(x.begin(), x.end());
 auto max_idx = max_it - x.begin(); // known to be safe after can_ptrdiff().
+```
+
+If we created our containers with `sanisizer::create()`, the `can_ptrdiff()` check is automatically performed.
+This ensures that integers up to the container's size can be safely used in iterator arithmetic.
+For more advanced applications, users can obtain the "effective size type" to ensure that an integer is representable in (i) the container's size type,
+(ii) the iterator difference type, if the container has random access iterators,
+and (iii) `std::size_t` and `std::ptrdiff_t`, if the container provides a pointer to the underlying array.
+
+```cpp
+// Allocating storage for a matrix based on its number of rows and columns.
+auto matrix_length = sanisizer::product<sanisizer:EffectiveSizeType<std::vector<double> > >(nrow, ncol);
+std::vector<double> x(matrix_length);
 ```
 
 In practice, this may not be necessary as glibc 2.30 prohibits allocations beyond the maximum size of `PTRDIFF_MAX`.
