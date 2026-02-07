@@ -80,34 +80,23 @@ If we assume that `std::size_t` is enough, the same function can be used with `s
 
 An annoying quirk of C++ is that distances between pointers for the same array (and possibly iterator differences in general) are not guaranteed to fit into the difference type.
 For example, `std::ptrdiff_t` is a typically the signed counterpart of `std::size_t`, and an array size that fits in the latter may not fit in the former.
-This annoyance is compounded by the fact that many of the STL algorithms return iterators, e.g., `std::max_element`, `std::lower_bound`.
+Similarly, for `std::vector`, we could end up in a situation where `vec[i]` will work while `*(vec.begin() + i)` will not when `i` is between the maximum sizes of `std::ptrdiff_t` and `std::size_t`.
+(`std::vector` iterator arithmetic will cast its integer inputs to the vector's difference type.)
+This issue is compounded by the fact that many of the STL algorithms return iterators, e.g., `std::max_element`, `std::lower_bound`.
 If we need a positional index, we need to convert the returned iterator back to an index via subtraction.
-We can use the `sanisizer::ptrdiff()` function to ensure that the difference can be represented by the iterator's difference type:
 
-```cpp
-std::vector<double> x(vec_length);
-sanisizer::can_ptrdiff<decltype(I(x.begin()))>(vec_length);
-auto max_it = std::max_element(x.begin(), x.end());
-auto max_idx = max_it - x.begin(); // known to be safe after can_ptrdiff().
-```
+Some implementations protect against this discrepancy by limiting allocations to `PTRDIFF_MAX`.
+See [here](https://lists.gnu.org/archive/html/info-gnu/2019-08/msg00000.html) for glibc's behavior with `malloc` -
+presumably the same restrictions apply for implementations of `std::vector`, as discussed [here](https://discourse.llvm.org/t/libc-max-size-of-a-std-vector/35449).
+For the sake of sanity, we will assume that such protection is already present when writing our code. 
+Otherwise, the issue is too pervasive to cheaply defend against - for example, every `size_t` would have to be checked for overflow at run time when used in iterator arithmetic. 
+We think it's fair to expect a good implementation to produce an array/vector that doesn't suddenly exhibit undefined behavior past a certain size.
 
-If we created our containers with `sanisizer::create()`, the `can_ptrdiff()` check is automatically performed.
-This ensures that integers up to the container's size can be safely used in iterator arithmetic.
-For more advanced applications, users can obtain the "effective size type" to ensure that an integer is representable in (i) the container's size type,
-(ii) the iterator difference type, if the container has random access iterators,
-and (iii) `std::size_t` and `std::ptrdiff_t`, if the container provides a pointer to the underlying array.
-
-```cpp
-// Allocating storage for a matrix based on its number of rows and columns.
-auto matrix_length = sanisizer::product<sanisizer:EffectiveSizeType<std::vector<double> > >(nrow, ncol);
-std::vector<double> x(matrix_length);
-```
-
-In practice, this may not be necessary as glibc 2.30 prohibits allocations beyond the maximum size of `PTRDIFF_MAX`.
-See [here](https://lists.gnu.org/archive/html/info-gnu/2019-08/msg00000.html) for discussion - presumably the same restrictions apply for `std::vector`,
-otherwise an element accessible via `x[i]` would not be accessible via `x.begin() + i`.
-That said, this is a implementation choice, and the standard explicitly mentions that the pointer difference may not fit in `std::ptrdiff_t` in a conforming implementation!
-So, better to be safe than sorry.
+In practice, this shouldn't matter too much.
+For typical implementations where `std::ptrdiff_t` is the signed counterpart of `std::size_t`,
+the discrepancy is only relevant when the size of each array element is no greater than 1. 
+Then there's the matter of actually requesting an allocation that is large enough to exceed `PTRDIFF_MAX`,
+which is very unlikely for the vast majority of 64-bit systems.
 
 ## Converting to/from floating-point
 
