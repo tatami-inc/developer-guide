@@ -29,7 +29,7 @@ Under this assumption, indices and extents that are typically stored as `Index_`
 
 ## Container sizes
 
-Indexed iteration over an arbitrary container `x` should use `decltype(I(x.size()))`.
+Indexed iteration over an arbitrary container `x` should use the container's size type, i.e., `I<decltype(x.size()))>`.
 This ensures that the index type is large enough to span the size of the container.
 Of course, this is only relevant if the size of the container is not subject to other constraints -
 for example, if we know that the container has length equal to the number of rows, and the number of rows fits into an `int`, it is obviously safe to use `int` to iterate over the container.
@@ -61,9 +61,9 @@ auto x2 = tatami::create_container_of_Index_size(x, new_length);
 ```
 
 This protection may be omitted for calls to a container's `reserve()` method, if one exists.
-A smaller-than-expected reservation from wrap-around is mostly harmless, as it will be expanded upon insertion.
-(Nonetheless, performance degradation can be avoided by using `sanisizer::cap()` to attempt to reserve up to the maximum value of the size type.)
+A smaller-than-expected reservation from wrap-around is usually harmless, as it will be expanded upon insertion.
 Insertions beyond the container's size type will eventually result in `std::bad_alloc`.
+Nonetheless, if the requested size is really necessary, `sanisizer::reserve()` can be used to ensure that it was correctly reserved.
 
 ## On `std::vector::size_type`
 
