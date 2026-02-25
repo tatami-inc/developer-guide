@@ -4,38 +4,125 @@
 
 Historically, floating-point calculations were parallelized in a manner that ensures that the number of workers does not affect the result.
 This requires some care in designing algorithms to ensure the exact same result was obtained during floating-point calculations.
-The aim was to allow users to freely alter the number of threads without compromising reproducibility.
+The aim was to allow users to freely alter the number of workers without compromising reproducibility.
 This is most relevant when dealing with downstream algorithms based on ranks, where slight floating-point errors can lead to discrete changes in rank.
 
 With the benefit of hindsight, this policy is probably unnecessary.
 
-- Most users will not change the number of threads after their analysis,
-  so they won't even know that there is a difference due to the number of threads.
-- The main reason to change the number of threads is to account for differences in hardware.
-  At that point, it is likely that a different CPU is involved, at which point exact floating-point reproducibility is no longer guaranteed.
+- Most users will not change the number of workers after their analysis,
+  so they won't even know that there is a difference due to the number of workers.
+- The main reason to change the number of workers is to account for differences in hardware.
+  At that point, it is likely that different CPU architectures/instruction sets/standard math libraries are involved,
+  at which point exact floating-point reproducibility is no longer guaranteed.
 - This policy is inconsistent with the acceptance of different results between matrix representations due to sparsity or row/column preferences.
   The obvious candidate is that of the per-row/column variances, and no one has complained so far. 
 
 All future algorithmic choices in **tatami** can disregard this policy.
-This allows us to use more efficient methods for partitioning work between cores. 
-Note that the differences in results due to parallelization should be limited to floating-point error, i.e., the result should be the same under exact math.
+This allows us to use more efficient methods for sharing tasks between workers, such as reductions on floating-point values that were computed within each worker.
+For example, when computing row sums for a column-major matrix, we could assign blocks of columns to each worker;
+compute the partial sum for each row within each worker; and then add the partial sums across workers to obtain the overall row sum.
+This would yield slightly different results to worker-agnostic approach where blocks of rows are assigned to each worker,
+but would be more efficient as there are fewer stop-starts and cache misses from reading small parts of each column in each worker.
+
+Keep in mind that it's a not a total free-for-all here.
+Any differences in results due to parallelization should be limited to floating-point error, i.e., the result should be the same under exact math.
+Additionally, the results should still be exactly reproducible within the same compute environment.
+This means that the partitioning of tasks and the order of any reductions should be deterministic.
+(For comparison, OpenMP has reduction clauses but does not mandate determinism,
+which makes it [somewhat difficult to use](https://stackoverflow.com/questions/75211606/openmp-reproducible-reduction).)
 
 ## False sharing
 
 False sharing can be mostly avoided by writing code in a manner that uses automatic variables allocated on each thread's stack.
 This is good practice regardless of whether we're in a multi-threaded context.
 
-If threads need to write to the heap, false sharing can be mitigated by creating separate heap allocations within each thread, e.g., by constructing a thread-specific `std::vector`.
-This gives `malloc` a chance to use different memory arenas (depending on the implementation) that separates each thread's allocations.
-We could guarantee protection against false sharing by aligning all heap allocations to `hardware_destructive_interference_size`;
-but then we would need to override `std::allocator` in all STL containers, which seems too intrusive for general use.
-Obviously, writing to contiguous memory in the heap across multiple threads should be done sparingly, typically to the output buffer once all calculations are complete.
-
-An interesting sidenote is that each thread will typically create its own `tatami::Extractor` instance on the heap.
+If threads need to write to the heap, false sharing is harder to avoid.
+For example, each thread will typically create its own `tatami::Extractor` instance on the heap.
 Modifications to data members of each `tatami::Extractor` instance during `fetch()` calls could be another source of false sharing.
-This might be avoidable by adding an `alignas(hardware_destructive_interference_size)` to the class definition,
-but this is only supported by very recent compilers and I'm not even sure if it's legal when the object's natural alignment is stricter;
-so, we'll just stick to our ostrich strategy of hoping that `malloc` takes care of it.
+This could be fixed by adding an `alignas(hardware_destructive_interference_size)` to the class definition,
+but this is only supported by very recent compilers and I'm not even sure if it's legal when the object's natural alignment is stricter.
+
+Fortunately, modern allocators with multi-threaded support will partition the heap into separate "arenas" for each thread.
+Allocations in one thread will use memory from one arena, relatively isolated from another thread's allocations in a different arena.
+Thus, we can encourage `malloc` to mitigate false sharing by simply creating our heap-allocated objects (e.g., `tatami::Extractor`, `std::vector`) within each thread.
+This is convenient as it just involves writing idiomatic C++ where the objects are scoped within each thread. 
+Of course, we're not guaranteed to avoid false sharing here - to do that, we'd need to align all heap allocations to `hardware_destructive_interference_size`,
+but then we would need to override `std::allocator` in all STL containers, which seems too intrusive for general use.
+
+At some point, we may need to write to contiguous memory in the heap across multiple threads, typically to store our results. 
+This should be done sparingly, e.g., by operating solely on thread-local data structures and moving the data to a shared output buffer at the very end.
+For example, if we wanted to count the number of non-zero elements in each column of a `tatami::Matrix`, we could do the following:
+
+```cpp
+const int NR = matrix->nrow();
+const int NC = matrix->ncol();
+std::vector<double> column_counts(NC);
+
+tatami::parallelize([&](int, int start, int length) -> void {
+    std::vector<double> buffer(NR);
+    auto ext = matrix->dense_column();
+
+    // Hopefully this is allocated in a separate arena.
+    std::vector<double> resbuffer(length);
+
+    for (int c = start, end = start + length; c < end; ++c) {
+        auto ptr = ext->fetch(c, buffer.data());
+        int count = 0;
+        for (int r = 0; r < NR; ++r) {
+            count += ptr[r] != 0;
+        }
+        resbuffer[c - start] = count;
+    }
+
+    // Maybe there's some false sharing here, but we're already out of the
+    // loop, so it won't matter much as it's only called once per thread.
+    std::copy(resbuffer.begin(), resbuffer.end(), column_counts + start);
+
+    // A slightly more clever implementation could even avoid the allocation
+    // and copy in one of the threads by directly writing to 'column_counts'.
+    // If only one thread is writing there, there won't be much risk of false
+    // sharing, especially given that we're only writing to a slice of
+    // 'column_counts' so there's lots of padding until the next allocation.
+}, NC, nthreads);
+```
+
+With all that said, we shouldn't be too scared of false sharing in typical **tatami** applications.
+Most arrays are quite large (> 1000's of elements, typically `int` or `double`) and each thread will only be operating within a small range of that array.
+This far exceeds the usual size of a cache line (64 bytes) - so, even in a suboptimal scenario where multiple threads operate within the same array,
+any false sharing would limited to the boundaries of each thread's operation and have negligible impact on the overall runtime.
+
+## Optimizing reductions
+
+In some parallel applications, it may be convenient to obtain results from each worker and reduce them in the serial section.
+This is easy enough to do with the worker ID that is passed along by `tatami::parallelize()`,
+which can index into an output array for storage of each worker's results.
+We generally recommend using the following pattern:
+
+```cpp
+// Number of workers had better be positive!
+std::vector<std::optional<ResultType> > per_worker_output(nworkers);
+
+auto num_used = tatami::parallelize([&](int t, int start, int length) -> void {
+    ResultType current = some_kind_of_initialization();
+    // Populate 'current' with some results...
+    per_worker_output[t] = std::move(current);
+}, ntasks, nworkers);
+
+if (num_used == 0) {
+    per_worker_output[0] = some_kind_of_initialization();
+}
+
+auto base = std::move(*(per_worker_output[0]));
+for (int t = 1; t < num_used; ++t) {
+    const auto& res = *(per_worker[t - 1]);
+    // combine 'res' with '*base' for the reduction.
+}
+```
+
+In each worker, `current` refers to a thread-specific instance of the result object, which reduces the risk of false sharing.
+Once the compute is done, we move the populated result object to the output vector for reduction.
+To save time, we only bother traversing the results that were actually populated (`num_used`).
+However, if no results were populated, we fill in the first result to make sure that downstream code actually has something to work with.
 
 ## SIMD vectorization
 
