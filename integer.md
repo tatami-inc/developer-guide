@@ -29,17 +29,7 @@ Under this assumption, indices and extents that are typically stored as `Index_`
 
 ## Container sizes
 
-Indexed iteration over an arbitrary container `x` should use the container's size type, i.e., `I<decltype(x.size()))>`.
-This ensures that the index type is large enough to span the size of the container.
-Of course, this is only relevant if the size of the container is not subject to other constraints -
-for example, if we know that the container has length equal to the number of rows, and the number of rows fits into an `int`, it is obviously safe to use `int` to iterate over the container.
-
-```cpp
-const auto n = x.size();
-for (decltype(I(n)) i = 0; i < n; ++i) {
-    // do something here.
-}
-```
+### Allocation
 
 When allocating or resizing a container, we must consider the possibility that the new length is greater than the container's size type.
 If the implicit cast wraps around, we would silently create a vector that is smaller than intended.
@@ -63,7 +53,41 @@ auto x2 = tatami::create_container_of_Index_size(x, new_length);
 This protection may be omitted for calls to a container's `reserve()` method, if one exists.
 A smaller-than-expected reservation from wrap-around is usually harmless, as it will be expanded upon insertion.
 Insertions beyond the container's size type will eventually result in `std::bad_alloc`.
-Nonetheless, if the requested size is really necessary, `sanisizer::reserve()` can be used to ensure that it was correctly reserved.
+Nonetheless, if reservation to the requested size is really necessary (e.g., to preserve pointer validity), `sanisizer::reserve()` can be used to ensure that it was correctly reserved.
+
+### Iteration
+
+Indexed iteration over an arbitrary container `x` should use the container's size type, i.e., `I<decltype(x.size()))>`.
+This ensures that the index type is large enough to span the size of the container.
+Of course, this is only relevant if the size of the container is not subject to other constraints -
+for example, if we know that the container has length equal to the number of rows, and the number of rows fits into an `int`, it is obviously safe to use `int` to iterate over the container.
+
+```cpp
+const auto n = x.size();
+for (I<decltype(n)> i = 0; i < n; ++i) {
+    // do something here.
+}
+```
+
+Some care is required when performing integer arithmetic in the loop initialization, because it's easy to overlook potential overflow. 
+In example 1 below, we need to be sure that `start + length` does not overflow `Index_`.
+Sometimes it's more subtle, like in example 2 where we want to start from the second element of an array subinterval.
+Adding 1 to `start` might cause an overflow if `start` is already equal to the maximum value of `Index_`.
+
+```cpp
+// Example 1:
+for (Index_ x = start, end = start + length; ; x < end; ++x) {
+    // do something here.
+}
+
+// Example 2:
+// If end already fits in an Index_, then this protects against overflow of start + 1.
+if (start < end) { 
+    for (Index_ x = start + 1; x < end; ++x) {
+        // do something here.
+    }
+}
+```
 
 ## On `std::vector::size_type`
 
