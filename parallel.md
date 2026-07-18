@@ -33,12 +33,15 @@ which makes it [somewhat difficult to use](https://stackoverflow.com/questions/7
 
 ## False sharing
 
-False sharing can be mostly avoided by writing code in a manner that uses automatic variables allocated on each thread's stack.
-This is good practice regardless of whether we're in a multi-threaded context.
+### Mitigation strategies 
+
+False sharing can be mostly avoided by using automatic variables allocated on each thread's stack.
+Stacks of different threads should be far away from each other in memory, so there should be no overlap of cache lines.
+Preferential use of the stack is good practice regardless of whether we're in a multi-threaded context.
 
 If threads need to write to the heap, false sharing is harder to avoid.
 For example, each thread will typically create its own `tatami::Extractor` instance on the heap.
-Modifications to data members of each `tatami::Extractor` instance during `fetch()` calls could be another source of false sharing.
+Modifications to data members of each `tatami::Extractor` instance during `fetch()` calls could cause false sharing if multiple instances are adjacent in memory.
 This could be fixed by adding an `alignas(hardware_destructive_interference_size)` to the class definition,
 but this is only supported by very recent compilers and I'm not even sure if it's legal when the object's natural alignment is stricter.
 
@@ -49,8 +52,12 @@ This is convenient as it just involves writing idiomatic C++ where the objects a
 Of course, we're not guaranteed to avoid false sharing here - to do that, we'd need to align all heap allocations to `hardware_destructive_interference_size`,
 but then we would need to override `std::allocator` in all STL containers, which seems too intrusive for general use.
 
-At some point, we may need to write to contiguous memory in the heap across multiple threads, typically to store our results. 
-This should be done sparingly, e.g., by operating solely on thread-local data structures and moving the data to a shared output buffer at the very end.
+Check out https://github.com/tatami-inc/test-false_sharing for more comments.
+
+### Writing to an output array
+
+We often need to write results to contiguous memory in the heap across multiple threads.
+This should be done sparingly, e.g., by operating solely on thread-local data structures and moving the data to a shared output buffer once the calculation is done.
 For example, if we wanted to count the number of non-zero elements in each column of a `tatami::Matrix`, we could do the following:
 
 ```cpp
@@ -67,29 +74,31 @@ tatami::parallelize([&](int, int start, int length) -> void {
 
     for (int c = start, end = start + length; c < end; ++c) {
         auto ptr = ext->fetch(c, buffer.data());
+
+        // Thread-local 'count' variable, not a reference to 'column_counts[c]'.
         int count = 0;
         for (int r = 0; r < NR; ++r) {
             count += ptr[r] != 0;
         }
-        resbuffer[c - start] = count;
+
+        // Small risk of false sharing here, but we're already out of the
+        // hot loop, so it won't matter much. 
+        column_counts[c] = count;
     }
-
-    // Maybe there's some false sharing here, but we're already out of the
-    // loop, so it won't matter much as it's only called once per thread.
-    std::copy(resbuffer.begin(), resbuffer.end(), column_counts + start);
-
-    // A slightly more clever implementation could even avoid the allocation
-    // and copy in one of the threads by directly writing to 'column_counts'.
-    // If only one thread is writing there, there won't be much risk of false
-    // sharing, especially given that we're only writing to a slice of
-    // 'column_counts' so there's lots of padding until the next allocation.
 }, NC, nthreads);
 ```
 
-With all that said, we shouldn't be too scared of false sharing in typical **tatami** applications.
-Most arrays are quite large (> 1000's of elements, typically `int` or `double`) and each thread will only be operating within a small range of that array.
-This far exceeds the usual size of a cache line (64 bytes) - so, even in a suboptimal scenario where multiple threads operate within the same array,
-any false sharing would limited to the boundaries of each thread's operation and have negligible impact on the overall runtime.
+We shouldn't be too scared of false sharing in typical **tatami** applications, for various reasons:
+
+- If we follow the strategy above, false sharing should not be a problem as most time should be spent in the hot loop doing thread-local work.
+  Any cache coherency-related stall should be easy to hide via out-of-order execution where the CPU moves onto the next loop iteration.
+  In addition, we're only doing stores, which provides extra opportunities for further hiding via the CPU's store buffer.
+- Most arrays are quite large (> 1000's of elements, typically `int` or `double`) and should exceed the usual size of a cache line (64 bytes).
+  So, even in a suboptimal scenario where multiple threads operate within the same array,
+  any false sharing would limited to the boundaries of each thread's operation and have negligible impact on the overall runtime.
+- We could mitigate false sharing by allocating a per-thread block of memory to store all results, and then transferring them to the output array at the end.
+  This requires another allocation and an extra transfer step, which might not be faster than just putting up with a bit of false sharing.
+  (That said, if the hot loop updates multiple outputs, a thread-local store and its copy would be advisable.)
 
 ## Optimizing reductions
 
