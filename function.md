@@ -51,10 +51,12 @@ However, this is not ergonomic if those parameters are only known at run-time, a
 I also suspect that this will bloat the binaries, especially if many combinations of arguments must be considered at compile-time.
 Thus, non-type-related template parameters should be used sparingly - usually only in performance-critical loops.
 
-Template functions should refrain from adding defaults for their template parameters.
+Template functions should generally refrain from adding defaults for their template parameters.
 Most template arguments can be deduced at the call site so the corresponding defaults would not be used anyway.
 If deduction fails, the presence of defaults can result in confusing errors when the compiler attempts to match the supplied type to the default (or worse, silently perform a conversion).
 The obvious exception is that of a template parameter that defines an non-deducible output type, in which case a "sensible" default may be convenient and self-documenting.
+(The caveat to this exception is that of internal-only functions, where a default might hide the fact that we forgot to pass along a template parameter from the calling context.
+In such cases, the convenience of a default is not worth the risk of bugs that would otherwise be caught at compile time.)
 
 In the template parameter list, non-deducible template parameters without defaults should always appear first;
 followed by the non-deducible parameters with defaults;
