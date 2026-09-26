@@ -136,38 +136,48 @@ However, if no results were populated, we fill in the first result to make sure 
 ## SIMD vectorization
 
 Ah, vectorization: the policy with the most flip-flopping in this guide.
+Long story short, most of the loops in **tatami** are trivially auto-vectorizable so no further work is necessary when compiled with the relevant flags, e.g., `-O3`, `-mavx`.
 
-Most of the loops in **tatami** are trivially auto-vectorizable so no further work is necessary when compiled with the relevant flags, e.g., `-O3`, `-march=`.
-There might be a slight inefficiency due to the need to check against aliasing pointers, but this is fine;
-the check is performed outside of the loop and should not have much impact on performance.
+Auto-vectorizing compilers will typically generate a vectorized version of the loop followed by a scalar epilogue loop.
+This is preceded by a check for aliasing pointers, the presence of which will cause control to jump straight to the epilogue.
+In theory, this process is slightly inefficient compared to manual vectorization if we know that the pointers do not alias.
+However, the performance drop should be minimal given that the check is performed before the loop iterations.
 On the rare occasion that the check is run frequently relative to the loop body, branch prediction should eliminate most of the cost for the expected case of non-aliasing pointers.
-Auto-vectorization also tends to use unaligned SIMD loads and stores, but it's hard to imagine doing otherwise in library code that might take pointers from anywhere (e.g., R).
+The insertion of the check code also bloats the binary a bit but this is usually negligible.
+
+Auto-vectorization also tends to use unaligned SIMD loads and stores in the vectorized loop.
+It's hard to imagine doing otherwise in library code that might take pointers from anywhere (e.g., R).
 Fortunately, it seems like unaligned instructions are pretty performant on modern CPUs,
 see commentary [here](https://stackoverflow.com/questions/52147378/choice-between-aligned-vs-unaligned-x86-simd-instructions)
 and [here](https://stackoverflow.com/questions/20259694/is-the-sse-unaligned-load-intrinsic-any-slower-than-the-aligned-load-intrinsic-o).
 
-That said, there are two common scenarios where auto-vectorization is not possible.
-
-1. Accessing a sparse vector by index.
-   If the compiler cannot prove that the indices are unique, different loop iterations are not guaranteed to be independent. 
-   Here, I went through many possibilities to inform the compiler that vectorization can be performed.
+That said, there are two common scenarios in **tatami** where auto-vectorization is not possible.
+The first of these involves writing to a dense vector by the indices of a sparse vector.
+We know that the indices are unique, but this cannot be expressed to the compiler;
+the compiler then needs to consider the possibility that different loop iterations might write to the same location, which precludes auto-vectorization.
+Here, I went through many possibilities to inform the compiler that vectorization can be performed.
    
-   - Using OpenMP SIMD to force vectorization. 
-     While this works, it is often subject to a more heavy-handed interpretation by compilers.
-     Upon seeing `#pragma omp simd`, [GCC](https://developers.redhat.com/articles/2023/12/08/vectorization-optimization-gcc) will forcibly vectorize the loop,
-     even if doing so would decrease performance according to its cost model.
-     [MSVC](https://devblogs.microsoft.com/cppblog/simd-extension-to-c-openmp-in-visual-studio/) goes further and enables fast floating-point inside the loop, which is not generally desirable.
-   - Encouraging vectorization with compiler-specific pragmas to indicate that there are no dependencies between loop iterations,
-     e.g., `#pragma GCC ivdep` or `#pragma clang loop vectorize(assume_safety)`.
-     This also works fairly well but it's hard to keep track of exactly how each compiler is interpreting these pragmas.
-     Are all dependencies ignored? Or just the non-proven ones?
-     Needless to say, these pragmas are non-portable and require careful testing on each platform.
+- Using OpenMP SIMD to force vectorization. 
+  While this works, it is often subject to a more heavy-handed interpretation by compilers.
+  Upon seeing `#pragma omp simd`, [GCC](https://developers.redhat.com/articles/2023/12/08/vectorization-optimization-gcc) will forcibly vectorize the loop,
+  even if doing so would decrease performance according to its cost model.
+  [MSVC](https://devblogs.microsoft.com/cppblog/simd-extension-to-c-openmp-in-visual-studio/) goes further and enables fast floating-point inside the loop, which is not generally desirable.
+- Encouraging vectorization with compiler-specific pragmas to indicate that there are no dependencies between loop iterations,
+  e.g., `#pragma GCC ivdep` or `#pragma clang loop vectorize(assume_safety)`.
+  (See the [**auveh**](https://github.com/LTLA/auveh) library for an attempt to centralize these pragma definitions.)
+  This also works fairly well but it's hard to keep track of exactly how each compiler is interpreting these pragmas.
+  Are all dependencies ignored? Or just the non-proven ones?
+  This requires great care to avoid inconsistent behavior across compilers.
+  Also, clang will emit annoying warnings when its pragma is present but vectorization cannot be achieved for whatever reason. 
 
-   In the end, I suspect that it's not worth the effort to attempt to optimize this access pattern.
-   Plenty of excuses here: lack of efficient gather/scatter for many CPUs, likely memory bottlenecks in sparse data, etc.
-2. Calling `<cmath>` functions inside the loop, primarily for the delayed math operations.
-   Vectorization is precluded by the `errno` side-effect and, for some functions like `std::log`, the need for `-ffast-math` to use vectorized replacements.
-   While compiling with `-fno-math-errno` seems [fine](https://stackoverflow.com/questions/7420665/what-does-gccs-ffast-math-actually-do?noredirect=1&lq=1),
-   using fast math in general is obviously a less palatable option and I can't cajole GCC into using the (unexported) vectorized `log` function without it.
-   So, the solution is to just write a variant of a delayed operation helper that uses a vectorized `log` implementation from an external library like **Eigen**.
-   Then, users can choose between the standard helper or the vectorized variant that requires an extra dependency.
+In the end, I suspect that it's not worth the effort to attempt to optimize this access pattern.
+My main rationalization for this is that most CPUs historically lack efficient instructions for gather/scatter.
+Even with such instructions, sparse data will typically have indices that refer to different cache lines.
+If so, performance would be dictated by memory fetching and we might expect no benefit over scalar code.
+
+The other scenario involves calling `<cmath>` functions inside the loop, primarily for the delayed math operations.
+Auto-vectorization is precluded by the `errno` side-effect and, for some functions like `std::log`, the need for `-ffast-math` to use non-exact vectorized replacements.
+While compiling with `-fno-math-errno` seems [fine](https://stackoverflow.com/questions/7420665/what-does-gccs-ffast-math-actually-do?noredirect=1&lq=1),
+using fast math in general is obviously a less palatable option and I can't cajole GCC into using the (unexported) vectorized `log` function without it.
+So, the solution is to just write a variant of a delayed operation helper that uses a vectorized `log` implementation from an external library like **Eigen**.
+Then, users can choose between the standard helper or the vectorized variant that requires an extra dependency.
