@@ -4,11 +4,13 @@
 
 Classes should not have any public members.
 Access to members should be granted via getters or setters.
-All members should be prefixed by `my_` to avoid confusion with arguments in the constructor and initialization list.
+All members should be prefixed by `my_` to avoid shadowing-related confusion with arguments in the constructor body and initialization list.
 
-Structs should have public members only, with no private members or methods.
+Structs should have public members only, with no methods or private members. 
 These are treated as passive data carriers with no additional functionality.
-A non-default constructor is allowed, though.
+A non-default constructor is allowed, though arguments should not share the same name as any of the members.
+If a constructor argument is used to directly initialize a member, we might be tempted to use the same name for a nicer interface;
+however, we strongly recommend suffixing the former's name with `_arg` to avoid complications with shadowing inside the constructor.
 
 (Some of these ideas were taken from Google's C++ style guide.)
 
